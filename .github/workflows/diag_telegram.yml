@@ -7,28 +7,17 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Telegram (simple curl)
+      - name: Send message via Telegram Bot API
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          test -n "$TG_TOKEN" || (echo "❌ TG_TOKEN secret is empty" && exit 1)
-          test -n "$TG_CHAT_ID" || (echo "❌ TG_CHAT_ID secret is empty" && exit 1)
-          # Отправим короткое сообщение в канал
-          curl -sS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d "chat_id=${TG_CHAT_ID}" \
-            --data-urlencode "text=Проверка GitHub Actions ✅" \
-          | tee /tmp/tg_resp.json
-          echo "----"
-          cat /tmp/tg_resp.json
-          echo "----"
-          python - <<'PY'
-import json,sys
-j=json.load(open("/tmp/tg_resp.json"))
-ok=j.get("ok")
-if ok: 
-    print("✅ Telegram OK")
-else:
-    print("❌ Telegram error:", j.get("description"))
-    sys.exit(1)
-PY
+          set -euo pipefail
+          if [ -z "${TG_TOKEN}" ]; then echo "❌ Missing TG_TOKEN"; exit 1; fi
+          if [ -z "${TG_CHAT_ID}" ]; then echo "❌ Missing TG_CHAT_ID"; exit 1; fi
+          RESP=$(curl -sS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" \
+            --data-urlencode text="Ping ✅ from GitHub Actions")
+          echo "Telegram response:"
+          echo "${RESP}"
+          echo "${RESP}" | grep -q '"ok":true' || { echo "❌ Telegram returned error"; exit 1; }
