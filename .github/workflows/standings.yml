@@ -10,11 +10,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - env:
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install nba_api python-telegram-bot==13.15 pytz
+
+      - name: Sanity check secrets (не выводит сами значения)
+        run: |
+          python - <<'PY'
+          import os, sys, re
+          assert os.getenv("TG_TOKEN"), "Missing TG_TOKEN"
+          cid = os.getenv("TG_CHAT_ID")
+          assert cid, "Missing TG_CHAT_ID"
+          assert cid.strip().startswith("-100"), "TG_CHAT_ID должен начинаться с -100 (id канала)"
+          print("✅ Secrets look OK")
+          PY
+        env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: python standings_bot.py
+
+      - name: Run bot (with verbose logs)
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          DRY_RUN: "0"   # Поставь "1" чтобы прогнать без публикации (для теста)
+        run: |
+          python standings_bot.py
