@@ -1,11 +1,10 @@
 import os
 import sys
 import json
-import math
 import datetime as dt
 from zoneinfo import ZoneInfo
 from html import escape
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -16,8 +15,12 @@ from bs4 import BeautifulSoup
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 
-TZ = ZoneInfo("Europe/Helsinki")  # твой часовой пояс
-USER_AGENT = "NBA-Standings-Bot/1.0 (+https://espn.com, +https://basketball-reference.com)"
+TZ = ZoneInfo("Europe/Helsinki")  # твой пояс
+
+USER_AGENT = (
+    "NBA-Standings-Bot/2.0 "
+    "(+https://www.espn.com, +https://site.web.api.espn.com/apis/v2/; +https://www.basketball-reference.com)"
+)
 
 # ====== HTTP с ретраями ======
 def make_session() -> requests.Session:
@@ -34,16 +37,7 @@ def make_session() -> requests.Session:
 SESSION = make_session()
 
 # ====== Утилиты ======
-def season_end_year(today: dt.date) -> int:
-    """
-    NBA сезон обозначается годом завершения.
-    Если месяц >= 8 (август) — считаем, что сезон нового года (октябрь старт),
-    иначе — прошлогодний сезон.
-    """
-    return today.year + 1 if today.month >= 8 else today.year
-
 def norm_team_key(name: str) -> str:
-    """Приводим имя к ключу для сопоставления между сайтами."""
     return "".join(ch for ch in name.lower() if ch.isalnum())
 
 def pct(w: int, l: int) -> float:
@@ -51,13 +45,6 @@ def pct(w: int, l: int) -> float:
     return (w / g) if g > 0 else 0.0
 
 def arrow(delta_places: Optional[int]) -> str:
-    """
-    Возвращает стрелку тренда для места:
-      >0  -> 🟢▲+N
-      <0  -> 🔴▼N
-      ==0 -> ⚪︎=
-      None -> ⚪︎=
-    """
     if delta_places is None:
         return "⚪︎="
     if delta_places > 0:
@@ -66,110 +53,177 @@ def arrow(delta_places: Optional[int]) -> str:
         return f"🔴▼{abs(delta_places)}"
     return "⚪︎="
 
-# ====== Парсим ESPN (текущие standings) ======
-def fetch_espn_standings_html() -> Dict[str, List[Dict]]:
-    """
-    Парсит https://www.espn.com/nba/standings (конференции).
-    Возвращает словарь:
-      {
-        "east": [ { "team": "...", "abbr": "...", "w": int, "l": int, "pct": float }, ... ],
-        "west": [ ... ]
-      }
-    """
-    url = "https://www.espn.com/nba/standings"
-    r = SESSION.get(url, timeout=30)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
+def _get_json(url: str, params: dict | None = None) -> dict:
+    try:
+        r = SESSION.get(url, params=params or {}, timeout=30)
+        if r.status_code != 200:
+            return {}
+        return r.json()
+    except Exception:
+        return {}
 
-    # Найдём заголовки "Eastern Conference" и "Western Conference"
-    # и ближайшие после них таблицы
-    def parse_conference(title_text: str) -> List[Dict]:
-        header = soup.find(lambda tag: tag.name in ("h2", "h3") and title_text in tag.get_text(strip=True))
-        if not header:
-            # fallback: поиск по тексту
-            header = soup.find(string=lambda t: t and title_text in t)
-            header = header.parent if header else None
-        if not header:
-            return []
-        table = header.find_next("table")
-        if not table:
-            return []
+# ====== ESPN JSON: текущие standings ======
+def _gather_standings_nodes(node: Any, out: List[dict]) -> None:
+    """Рекурсивно находим все узлы, где есть standings.entries."""
+    if isinstance(node, dict):
+        if "standings" in node and isinstance(node["standings"], dict):
+            st = node["standings"]
+            entries = st.get("entries") or st.get("groups") or []
+            # некоторые ревизии кладут entries прямо на уровень выше
+            if isinstance(entries, list) and entries:
+                out.append(node)
+        for v in node.values():
+            _gather_standings_nodes(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _gather_standings_nodes(v, out)
 
-        # определим индексы столбцов W, L, PCT по заголовку
-        thead = table.find("thead")
-        tbody = table.find("tbody")
-        if not thead or not tbody:
-            return []
+def _stats_to_map(stats_list: List[dict]) -> Dict[str, Any]:
+    m: Dict[str, Any] = {}
+    for s in stats_list or []:
+        name = s.get("name") or s.get("abbreviation") or s.get("shortDisplayName")
+        if not name:
+            continue
+        m[name] = s.get("value", s.get("displayValue"))
+    return m
 
-        ths = [th.get_text(strip=True).upper() for th in thead.find_all("th")]
-        # иногда ESPN дублирует "TEAM" лево/право; нам нужны W, L, PCT
+def _entries_to_rows(entries: List[dict]) -> List[Dict]:
+    """Преобразует ESPN entries -> [{team, abbr, w, l, pct}]"""
+    rows: List[Dict] = []
+    for e in entries:
+        team = e.get("team") or {}
+        display = team.get("displayName") or team.get("name") or ""
+        abbr = team.get("abbreviation") or team.get("shortDisplayName") or display
+        stats = _stats_to_map(e.get("stats") or [])
+        # Основные поля:
+        w = int(stats.get("wins") or 0)
+        l = int(stats.get("losses") or 0)
+        wp = stats.get("winPercent")
         try:
-            w_idx = ths.index("W")
-            l_idx = ths.index("L")
-        except ValueError:
-            # иногда шапка может быть составной; попробуем альтернативы
-            w_idx = next((i for i, t in enumerate(ths) if t.startswith("W")), None)
-            l_idx = next((i for i, t in enumerate(ths) if t.startswith("L")), None)
-        try:
-            pct_idx = ths.index("PCT")
-        except ValueError:
-            pct_idx = next((i for i, t in enumerate(ths) if "PCT" in t), None)
+            wp = float(wp) if wp is not None else pct(w, l)
+        except Exception:
+            wp = pct(w, l)
+        rows.append({"team": display, "abbr": abbr, "w": w, "l": l, "pct": float(wp)})
+    # Сортируем по % побед, затем по победам
+    rows.sort(key=lambda x: (-x["pct"], -x["w"], x["team"]))
+    # Пронумеруем рангом
+    for i, r in enumerate(rows, 1):
+        r["rank"] = i
+    return rows
 
-        rows_out = []
-        for tr in tbody.find_all("tr"):
-            tds = tr.find_all("td")
-            if len(tds) < max( (w_idx or 0), (l_idx or 0), (pct_idx or 0) ) + 1:
-                continue
+def fetch_espn_standings_json() -> Dict[str, List[Dict]]:
+    """
+    Получает конференции с ESPN JSON (без парсинга HTML).
+    Возвращает {"east":[...], "west":[...]}.
+    """
+    # Основной и запасной эндпоинты (у ESPN бывают разные поддомены)
+    candidates = [
+        # site.web.api — чаще всего
+        "https://site.web.api.espn.com/apis/v2/sports/basketball/nba/standings?region=us&lang=en&contentorigin=espn",
+        # site.api — запасной
+        "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings?region=us&lang=en",
+    ]
 
-            # название команды — берём текст первой ячейки, в ней есть <a> с названием
-            team_cell = tds[0]
-            team_a = team_cell.find("a")
-            team_name = team_a.get_text(strip=True) if team_a else team_cell.get_text(strip=True)
-            abbr_span = team_cell.find("abbr")
-            team_abbr = abbr_span.get_text(strip=True) if abbr_span else ""
+    data = {}
+    for u in candidates:
+        data = _get_json(u)
+        if data:
+            break
+    if not data:
+        return {"east": [], "west": []}
 
-            def safe_int(x):
-                try:
-                    return int(str(x).strip())
-                except Exception:
-                    return 0
+    # Собираем все узлы с standings.entries
+    nodes: List[dict] = []
+    _gather_standings_nodes(data, nodes)
 
-            w = safe_int(tds[w_idx].get_text()) if w_idx is not None else 0
-            l = safe_int(tds[l_idx].get_text()) if l_idx is not None else 0
+    east_rows: List[Dict] = []
+    west_rows: List[Dict] = []
 
-            if pct_idx is not None:
-                try:
-                    pct_val = float(tds[pct_idx].get_text().strip())
-                except Exception:
-                    pct_val = pct(w, l)
-            else:
-                pct_val = pct(w, l)
+    # Хелпер: положить entries в нужную корзину
+    def push_by_name(name: str, entries: List[dict]):
+        nonlocal east_rows, west_rows
+        lname = (name or "").lower()
+        rows = _entries_to_rows(entries)
+        if "east" in lname:
+            east_rows = rows
+        elif "west" in lname:
+            west_rows = rows
 
-            rows_out.append({
-                "team": team_name,
-                "abbr": team_abbr,
-                "w": w,
-                "l": l,
-                "pct": pct_val
-            })
+    # 1) Пытаемся найти явные блоки Eastern/Western
+    for n in nodes:
+        name = n.get("name") or n.get("shortName") or n.get("abbreviation") or ""
+        st = n.get("standings") or {}
+        entries = st.get("entries") or []
+        if entries and isinstance(entries, list):
+            push_by_name(name, entries)
 
-        # Ранг по порядку строк
-        # Отсортируем по pct, затем по победам (на случай плохого порядка)
-        rows_out.sort(key=lambda x: (-x["pct"], -x["w"]))
-        return rows_out
+    # 2) Если всё ещё пусто, попробуем пройти по "children"
+    if (not east_rows or not west_rows) and "children" in data:
+        for ch in data.get("children", []):
+            name = ch.get("name") or ""
+            st = ch.get("standings") or {}
+            entries = st.get("entries") or []
+            if entries:
+                push_by_name(name, entries)
+            for ch2 in ch.get("children", []) or []:
+                name2 = ch2.get("name") or ""
+                st2 = ch2.get("standings") or {}
+                entries2 = st2.get("entries") or []
+                if entries2:
+                    push_by_name(name2, entries2)
 
-    east = parse_conference("Eastern Conference")
-    west = parse_conference("Western Conference")
-    return {"east": east, "west": west}
+    # 3) Фоллбэк: если в json пришёл один общий список, попробуем разбить по conference,
+    #    если у team -> groups/parentGroup есть имя Eastern/Western.
+    if (not east_rows or not west_rows):
+        all_entries: List[dict] = []
+        for n in nodes:
+            st = n.get("standings") or {}
+            entries = st.get("entries") or []
+            all_entries.extend(entries)
+        if all_entries:
+            east_tmp: List[dict] = []
+            west_tmp: List[dict] = []
+            for e in all_entries:
+                team = e.get("team") or {}
+                conf_name = ""
+                # варианты вложенности
+                grp = team.get("groups") or team.get("group")
+                if isinstance(grp, dict):
+                    conf_name = grp.get("name") or grp.get("shortName") or ""
+                elif isinstance(grp, list) and grp:
+                    g0 = grp[0] or {}
+                    conf_name = g0.get("name") or g0.get("shortName") or ""
+                lname = (conf_name or "").lower()
+                if "east" in lname:
+                    east_tmp.append(e)
+                elif "west" in lname:
+                    west_tmp.append(e)
+            if east_tmp and not east_rows:
+                east_rows = _entries_to_rows(east_tmp)
+            if west_tmp and not west_rows:
+                west_rows = _entries_to_rows(west_tmp)
+
+    # 4) Жёсткий фоллбэк: если совсем не нашли разделение — упорядочим общий список
+    #    и делим пополам (15/15). Лучше так, чем нули.
+    if not east_rows or not west_rows:
+        all_entries: List[dict] = []
+        for n in nodes:
+            st = n.get("standings") or {}
+            entries = st.get("entries") or []
+            all_entries.extend(entries)
+        rows_all = _entries_to_rows(all_entries)
+        if len(rows_all) >= 30:
+            east_rows = rows_all[:15]
+            west_rows = rows_all[15:30]
+
+    return {"east": east_rows, "west": west_rows}
 
 # ====== Вчерашние места (Basketball-Reference) ======
 def fetch_bbr_positions_yesterday(today: dt.date) -> Dict[str, Dict[str, int]]:
     """
-    Возвращает словарь с позициями команд на вчера:
+    Возвращает словарь позиций на вчера:
       { "east": { team_key: rank, ... }, "west": { ... } }
-    Используем страницу-калькулятор по дате:
-      https://www.basketball-reference.com/friv/standings.fcgi?month=MM&day=DD&year=YYYY
-    Если страница/парсинг недоступны — вернём пустые словари.
+    https://www.basketball-reference.com/friv/standings.fcgi?month=MM&day=DD&year=YYYY
     """
     yday = today - dt.timedelta(days=1)
     url = f"https://www.basketball-reference.com/friv/standings.fcgi?month={yday.month}&day={yday.day}&year={yday.year}"
@@ -179,7 +233,6 @@ def fetch_bbr_positions_yesterday(today: dt.date) -> Dict[str, Dict[str, int]]:
             return {"east": {}, "west": {}}
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # Ищем блоки с подзаголовками "Eastern Conference" / "Western Conference" и ближайшие таблицы
         def extract_positions(title_text: str) -> Dict[str, int]:
             header = soup.find(lambda tag: tag.name in ("h2", "h3") and title_text in tag.get_text(strip=True))
             if not header:
@@ -187,22 +240,19 @@ def fetch_bbr_positions_yesterday(today: dt.date) -> Dict[str, Dict[str, int]]:
                 header = header.parent if header else None
             if not header:
                 return {}
-
             table = header.find_next("table")
             if not table:
                 return {}
-
             body = table.find("tbody") or table
-            positions = {}
+            positions: Dict[str, int] = {}
             rank = 1
             for tr in body.find_all("tr"):
-                # пропускаем подзаголовочные/тотал строки
                 if tr.get("class") and any(c in ("thead", "stat_total") for c in tr.get("class", [])):
                     continue
-                tcell = tr.find("a")
-                if not tcell:
+                a = tr.find("a")
+                if not a:
                     continue
-                team_name = tcell.get_text(strip=True)
+                team_name = a.get_text(strip=True)
                 positions[norm_team_key(team_name)] = rank
                 rank += 1
             return positions
@@ -213,55 +263,38 @@ def fetch_bbr_positions_yesterday(today: dt.date) -> Dict[str, Dict[str, int]]:
     except Exception:
         return {"east": {}, "west": {}}
 
-# ====== Формирование таблиц с трендом ======
+# ====== Тренд и вывод ======
 def attach_trend(current_rows: List[Dict], yesterday_positions: Dict[str, int]) -> List[Dict]:
-    """
-    current_rows: список словарей {team, abbr, w, l, pct}
-    yesterday_positions: словарь team_key -> rank_yd
-    Возвращает тот же список, добавляя:
-      - "rank" (сегодня)
-      - "delta_places" (вчерашний ранг - сегодняшний)
-    """
-    # ранжируем по текущему порядку
-    ranked = sorted(current_rows, key=lambda x: (-x["pct"], -x["w"]))
+    ranked = sorted(current_rows, key=lambda x: (-x["pct"], -x["w"], x["team"]))
     for i, row in enumerate(ranked, start=1):
         row["rank"] = i
         key = norm_team_key(row["team"])
         y_rank = yesterday_positions.get(key)
-        if y_rank is None:
-            row["delta_places"] = None
-        else:
-            # если вчера был 5, сегодня 3 — delta_places = +2 (поднялись)
-            row["delta_places"] = y_rank - i
+        row["delta_places"] = None if y_rank is None else (y_rank - i)
     return ranked
 
 def fmt_table(title: str, rows: List[Dict]) -> str:
-    """
-    Формат строки с таблицей для Telegram.
-    Пример строки:
-      1  🟢▲+2  BOS  5–1  (83.3%)
-    """
     out = [f"<b>{escape(title)}</b>"]
     for r in rows:
         w, l = r["w"], r["l"]
-        pct_val = r["pct"]
-        arrow_str = arrow(r.get("delta_places"))
+        pct_str = f"{r['pct']:.3f}"
         abbr = r["abbr"] if r.get("abbr") else r["team"]
-        pct_str = f"{pct_val:.3f}"
-        out.append(f"{r['rank']:>2} {arrow_str:>4}  {escape(abbr)}  {w}–{l}  ({pct_str})")
+        out.append(f"{r['rank']:>2} {arrow(r.get('delta_places')):>4}  {escape(abbr)}  {w}–{l}  ({pct_str})")
     return "\n".join(out)
 
 # ====== Сообщение и отправка ======
 def build_message() -> str:
     today = dt.datetime.now(tz=TZ).date()
-    cur = fetch_espn_standings_html()
-    prev = fetch_bbr_positions_yesterday(today)
 
-    east = attach_trend(cur["east"], prev["east"])
-    west = attach_trend(cur["west"], prev["west"])
+    cur = fetch_espn_standings_json()
+    east_now, west_now = cur.get("east", []), cur.get("west", [])
+
+    prev = fetch_bbr_positions_yesterday(today)
+    east = attach_trend(east_now, prev.get("east", {}))
+    west = attach_trend(west_now, prev.get("west", {}))
 
     head = f"<b>НБА · Таблица по конференциям</b> — {today.strftime('%d %b %Y')}"
-    info = "ℹ️ Источники: ESPN (текущая таблица), Basketball-Reference (позиции на вчера)."
+    info = "ℹ️ Источники: ESPN JSON (текущая таблица), Basketball-Reference (позиции на вчера)."
     return "\n\n".join([head, fmt_table("Восточная конференция", east),
                         "", fmt_table("Западная конференция", west),
                         "", info])
