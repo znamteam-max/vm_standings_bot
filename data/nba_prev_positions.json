@@ -1,0 +1,37 @@
+{
+  "date": "2025-10-24",
+  "east": {
+    "CHA": 1,
+    "CHI": 2,
+    "MIL": 3,
+    "NYK": 4,
+    "ORL": 5,
+    "PHI": 6,
+    "TOR": 7,
+    "ATL": 8,
+    "BOS": 9,
+    "BKN": 10,
+    "CLE": 11,
+    "DET": 12,
+    "IND": 13,
+    "MIA": 14,
+    "WSH": 15
+  },
+  "west": {
+    "GSW": 1,
+    "OKC": 2,
+    "MEM": 3,
+    "MIN": 4,
+    "PHX": 5,
+    "SAS": 6,
+    "UTAH": 7,
+    "DAL": 8,
+    "DEN": 9,
+    "HOU": 10,
+    "LAC": 11,
+    "LAL": 12,
+    "NOP": 13,
+    "POR": 14,
+    "SAC": 15
+  }
+}
