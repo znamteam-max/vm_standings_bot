@@ -3,7 +3,7 @@ name: NBA standings to Telegram
 on:
   workflow_dispatch:
   schedule:
-    - cron: "5 5 * * *"  # каждый день ~07:05 по Европе/Хельсинки (cron работает в UTC)
+    - cron: "5 5 * * *"  # каждый день ~07:05 по Европе/Хельсинки (cron в UTC)
 
 permissions:
   contents: write   # нужно, чтобы коммитить файл с «вчерашними» позициями
@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0    # чтобы можно было коммитить и пушить обратно
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
