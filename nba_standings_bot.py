@@ -6,6 +6,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from html import escape
 from typing import Dict, List, Optional, Any
+import re
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -20,7 +21,7 @@ TZ = ZoneInfo("Europe/Helsinki")
 DATE_FMT = "%d %b %Y"
 
 USER_AGENT = (
-    "NBA-Standings-Bot/3.0 "
+    "NBA-Standings-Bot/3.1 "
     "(+https://site.web.api.espn.com/apis/v2/; +https://site.api.espn.com/apis/v2/)"
 )
 
@@ -257,20 +258,38 @@ def attach_trend(current_rows: List[Dict], yesterday_positions: Dict[str, int]) 
         row["delta_places"] = None if y_rank is None else (y_rank - i)
     return ranked
 
+_TAG_RE = re.compile(r"<[^>]+>")
+
 def fmt_table(title: str, rows: List[Dict]) -> str:
-    out = [f"<b>{escape(title)}</b>"]
+    """
+    Строки вида:
+      1  🟢▲+1  Бостон Селтикс  <b>5–1</b>  (83.3%)
+    После 6-го и 10-го мест — разделитель нужной длины из символов '─'.
+    """
+    # Сначала соберём содержимое строк (без заголовка), чтобы посчитать нужную длину разделителя
+    raw_lines_html: List[str] = []
+    raw_lines_plain_len: List[int] = []
+
     for r in rows:
         w, l = r["w"], r["l"]
-        pct_str = pct_percent_str(r["pct"])  # ##.#%
-        abbr = r["abbr"]
-        name_ru = RU_BY_ABBR.get(abbr, r["team"])
+        pct_str = pct_percent_str(r["pct"])
+        name_ru = RU_BY_ABBR.get(r["abbr"], r["team"])
+        line_html = f"{r['rank']:>2} {arrow(r.get('delta_places')):>4}  {escape(name_ru)}  <b>{w}–{l}</b>  ({pct_str})"
+        raw_lines_html.append(line_html)
+        # plain длина (без тэгов), чтобы подобрать длину дефисов
+        plain = _TAG_RE.sub("", line_html)
+        raw_lines_plain_len.append(len(plain))
 
-        # пометка плей-ин
-        playin = " <i>— плей-ин</i>" if 7 <= r["rank"] <= 10 else ""
+    sep_len = max(raw_lines_plain_len) if raw_lines_plain_len else 40
+    sep_line = "─" * max(sep_len, 30)  # минимальная разумная длина
 
-        out.append(
-            f"{r['rank']:>2} {arrow(r.get('delta_places')):>4}  {escape(name_ru)}  {w}–{l}  ({pct_str}){playin}"
-        )
+    # Теперь формируем финальный блок с заголовком и вставками разделителей
+    out: List[str] = [f"<b>{escape(title)}</b>"]
+    for idx, line_html in enumerate(raw_lines_html, start=1):
+        out.append(line_html)
+        if idx in (6, 10):  # после 6-го и 10-го мест
+            out.append(sep_line)
+
     return "\n".join(out)
 
 # ====== Сообщение и отправка ======
@@ -288,7 +307,7 @@ def build_message() -> str:
 
     # 3) Заголовок и блоки
     head = f"<b>НБА · Таблица по конференциям</b> — {today.strftime(DATE_FMT)}"
-    info = "ℹ️ Источник текущих данных: ESPN JSON. Сравнение по позициям — с предыдущего поста (локальный файл)."
+    info = "ℹ️ Источник текущих данных: ESPN JSON. Сравнение — с предыдущего поста (локальный файл)."
 
     # 4) Сохраняем сегодняшние позиции для следующего запуска
     save_current_as_prev(today, east, west)
