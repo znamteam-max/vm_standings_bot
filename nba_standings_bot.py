@@ -264,7 +264,7 @@ def fmt_table(title: str, rows: List[Dict]) -> str:
     """
     Пример строки:
       1  🟢▲+1  Бостон Селтикс  <b>5–1</b>  (83.3%)
-    После 6-го и 10-го мест — разделитель нужной длины из символов '─'.
+    После 6-го и 10-го мест — короткий разделитель (≈ в 3 раза короче прежнего).
     """
     raw_lines_html: List[str] = []
     raw_lines_plain_len: List[int] = []
@@ -278,8 +278,11 @@ def fmt_table(title: str, rows: List[Dict]) -> str:
         plain = _TAG_RE.sub("", line_html)
         raw_lines_plain_len.append(len(plain))
 
-    sep_len = max(raw_lines_plain_len) if raw_lines_plain_len else 40
-    sep_line = "─" * max(sep_len, 30)
+    # Раньше делали разделитель по максимальной длине строки,
+    # теперь берём ~треть этой длины, но не меньше 12 символов.
+    base_len = max(raw_lines_plain_len) if raw_lines_plain_len else 36
+    sep_len = max(12, base_len // 3)
+    sep_line = "─" * sep_len
 
     out: List[str] = [f"<b>{escape(title)}</b>"]
     for idx, line_html in enumerate(raw_lines_html, start=1):
