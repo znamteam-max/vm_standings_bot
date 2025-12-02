@@ -1,20 +1,20 @@
 {
-  "date": "2025-12-01",
+  "date": "2025-12-02",
   "east": {
     "DET": 1,
     "NYK": 2,
-    "TOR": 3,
-    "MIA": 4,
-    "ATL": 5,
-    "ORL": 6,
+    "MIA": 3,
+    "TOR": 4,
+    "ORL": 5,
+    "ATL": 6,
     "CLE": 7,
     "BOS": 8,
     "PHI": 9,
     "CHI": 10,
     "MIL": 11,
     "CHA": 12,
-    "IND": 13,
-    "BKN": 14,
+    "BKN": 13,
+    "IND": 14,
     "WSH": 15
   },
   "west": {
