@@ -1,13 +1,13 @@
 {
-  "date": "2025-12-19",
+  "date": "2025-12-20",
   "east": {
     "DET": 1,
     "NYK": 2,
     "TOR": 3,
     "BOS": 4,
     "PHI": 5,
-    "MIA": 6,
-    "ORL": 7,
+    "ORL": 6,
+    "MIA": 7,
     "ATL": 8,
     "CLE": 9,
     "CHI": 10,
@@ -20,18 +20,18 @@
   "west": {
     "OKC": 1,
     "DEN": 2,
-    "LAL": 3,
-    "SAS": 4,
+    "SAS": 3,
+    "LAL": 4,
     "HOU": 5,
     "MIN": 6,
     "PHX": 7,
     "MEM": 8,
     "GSW": 9,
-    "DAL": 10,
-    "POR": 11,
+    "POR": 10,
+    "DAL": 11,
     "UTAH": 12,
-    "SAC": 13,
-    "LAC": 14,
+    "LAC": 13,
+    "SAC": 14,
     "NOP": 15
   }
 }
