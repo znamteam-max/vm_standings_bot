@@ -1,5 +1,5 @@
 {
-  "date": "2026-01-31",
+  "date": "2026-02-01",
   "east": {
     "DET": 1,
     "BOS": 2,
@@ -9,21 +9,21 @@
     "PHI": 6,
     "ORL": 7,
     "MIA": 8,
-    "ATL": 9,
-    "CHI": 10,
+    "CHI": 9,
+    "ATL": 10,
     "CHA": 11,
     "MIL": 12,
     "BKN": 13,
-    "WSH": 14,
-    "IND": 15
+    "IND": 14,
+    "WSH": 15
   },
   "west": {
     "OKC": 1,
-    "SAS": 2,
-    "DEN": 3,
+    "DEN": 2,
+    "SAS": 3,
     "HOU": 4,
-    "LAL": 5,
-    "MIN": 6,
+    "MIN": 5,
+    "LAL": 6,
     "PHX": 7,
     "GSW": 8,
     "POR": 9,
