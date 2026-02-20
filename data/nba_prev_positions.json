@@ -1,21 +1,21 @@
 {
-  "date": "2026-02-19",
+  "date": "2026-02-20",
   "east": {
     "DET": 1,
     "BOS": 2,
-    "NYK": 3,
-    "CLE": 4,
+    "CLE": 3,
+    "NYK": 4,
     "TOR": 5,
     "PHI": 6,
     "ORL": 7,
     "MIA": 8,
-    "CHA": 9,
-    "ATL": 10,
-    "CHI": 11,
-    "MIL": 12,
+    "ATL": 9,
+    "CHA": 10,
+    "MIL": 11,
+    "CHI": 12,
     "BKN": 13,
-    "IND": 14,
-    "WSH": 15
+    "WSH": 14,
+    "IND": 15
   },
   "west": {
     "OKC": 1,
