@@ -2,8 +2,6 @@ name: NBA standings to Telegram
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "5 5 * * *"  # каждый день ~07:05 по Европе/Хельсинки (cron в UTC)
 
 permissions:
   contents: write   # нужно, чтобы коммитить файл с «вчерашними» позициями
