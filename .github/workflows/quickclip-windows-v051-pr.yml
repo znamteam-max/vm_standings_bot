@@ -13,7 +13,7 @@ permissions:
 jobs:
   build-and-smoke-test:
     runs-on: windows-2022
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,7 +60,7 @@ jobs:
         shell: pwsh
         run: dotnet publish "quickclip_build/QuickClip.csproj" -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishReadyToRun=false -o "publish"
 
-      - name: Verify executable
+      - name: Verify normal executable
         shell: pwsh
         run: |
           if (!(Test-Path "publish/QuickClip.exe")) { throw "QuickClip.exe was not produced" }
@@ -69,7 +69,7 @@ jobs:
           Write-Host "Size: $($exe.Length) bytes"
           Write-Host "File version: $($exe.VersionInfo.FileVersion)"
 
-      - name: Run actual WPF executable smoke test
+      - name: Run normal WPF executable smoke test
         shell: pwsh
         run: |
           $p = Start-Process -FilePath "$PWD/publish/QuickClip.exe" -ArgumentList "--smoke-ui" -PassThru
@@ -77,22 +77,49 @@ jobs:
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             throw "QuickClip.exe did not exit from smoke-ui mode within 15 seconds"
           }
-          if ($p.ExitCode -ne 0) {
-            throw "QuickClip.exe smoke test failed with exit code $($p.ExitCode)"
-          }
-          Write-Host "PASS: QuickClip.exe started its real WPF MainWindow and exited cleanly. ExitCode=$($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "QuickClip.exe smoke test failed with exit code $($p.ExitCode)" }
+          Write-Host "PASS_NORMAL: QuickClip.exe started its real WPF MainWindow and exited cleanly. ExitCode=$($p.ExitCode)"
 
-      - name: Package tested Windows build
+      - name: Publish one-file self-contained executable
+        shell: pwsh
+        run: |
+          dotnet publish "quickclip_build/QuickClip.csproj" -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:PublishReadyToRun=false -o "single"
+          if (!(Test-Path "single/QuickClip.exe")) { throw "Single-file QuickClip.exe was not produced" }
+          $exe = Get-Item "single/QuickClip.exe"
+          Write-Host "SINGLE_EXE_SIZE=$($exe.Length)"
+          Write-Host "SINGLE_EXE_SHA256=$((Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+
+      - name: Run one-file executable smoke test
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "$PWD/single/QuickClip.exe" -ArgumentList "--smoke-ui" -PassThru
+          if (-not $p.WaitForExit(20000)) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw "Single-file QuickClip.exe did not exit from smoke-ui mode within 20 seconds"
+          }
+          if ($p.ExitCode -ne 0) { throw "Single-file QuickClip.exe smoke test failed with exit code $($p.ExitCode)" }
+          Write-Host "PASS_SINGLE: one-file QuickClip.exe started its real WPF MainWindow and exited cleanly. ExitCode=$($p.ExitCode)"
+
+      - name: Package tested builds
         shell: pwsh
         run: |
           Compress-Archive -Path "publish/*" -DestinationPath "QuickClip-v0.5.1-Windows-x64-tested.zip" -Force
-          $hash = Get-FileHash "QuickClip-v0.5.1-Windows-x64-tested.zip" -Algorithm SHA256
-          Write-Host "PACKAGE_SHA256=$($hash.Hash.ToLowerInvariant())"
+          Copy-Item "single/QuickClip.exe" "QuickClip-v0.5.1-tested.exe" -Force
+          Write-Host "PACKAGE_SHA256=$((Get-FileHash 'QuickClip-v0.5.1-Windows-x64-tested.zip' -Algorithm SHA256).Hash.ToLowerInvariant())"
+          Write-Host "FINAL_EXE_SHA256=$((Get-FileHash 'QuickClip-v0.5.1-tested.exe' -Algorithm SHA256).Hash.ToLowerInvariant())"
 
-      - name: Upload tested build
+      - name: Upload tested package
         uses: actions/upload-artifact@v4
         with:
           name: QuickClip-v0.5.1-Windows-x64-tested
           path: QuickClip-v0.5.1-Windows-x64-tested.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload tested one-file EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickClip-v0.5.1-tested-exe
+          path: QuickClip-v0.5.1-tested.exe
           if-no-files-found: error
           retention-days: 7
