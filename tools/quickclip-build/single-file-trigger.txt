@@ -1,0 +1,1 @@
+Trigger single-file QuickClip Windows build and smoke test.
