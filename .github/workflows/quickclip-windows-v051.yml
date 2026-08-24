@@ -1,0 +1,100 @@
+name: QuickClip Windows v0.5.1
+
+on:
+  push:
+    branches:
+      - quickclip/windows-v051-build
+    paths:
+      - "tools/quickclip-build/**"
+      - ".github/workflows/quickclip-windows-v051.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke-test:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Reassemble QuickClip source bundle
+        shell: pwsh
+        run: |
+          $parts = @(
+            "tools/quickclip-build/part00",
+            "tools/quickclip-build/part01",
+            "tools/quickclip-build/rem00",
+            "tools/quickclip-build/rem01",
+            "tools/quickclip-build/rem02",
+            "tools/quickclip-build/rem03",
+            "tools/quickclip-build/rem04",
+            "tools/quickclip-build/rem05",
+            "tools/quickclip-build/rem06",
+            "tools/quickclip-build/rem07"
+          )
+          $b64 = ($parts | ForEach-Object { Get-Content -Raw $_ }) -join ""
+          [IO.File]::WriteAllBytes("QuickClipSource.zip", [Convert]::FromBase64String($b64))
+          $hash = (Get-FileHash "QuickClipSource.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "Source SHA256=$hash"
+          if ($hash -ne "e6df8ff735e66ed1b4c78ddb070ba55f7e7634a72c6d7a830dcbbc7b9ec50fe1") {
+            throw "QuickClip source bundle hash mismatch"
+          }
+          Expand-Archive -Path "QuickClipSource.zip" -DestinationPath "." -Force
+          if (!(Test-Path "quickclip_build/QuickClip.csproj")) { throw "QuickClip.csproj not found after extraction" }
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore "quickclip_build/QuickClip.csproj" -p:Platform=x64
+
+      - name: Build Release
+        shell: pwsh
+        run: dotnet build "quickclip_build/QuickClip.csproj" -c Release -p:Platform=x64 --no-restore
+
+      - name: Publish self-contained Windows x64
+        shell: pwsh
+        run: dotnet publish "quickclip_build/QuickClip.csproj" -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishReadyToRun=false -o "publish"
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          if (!(Test-Path "publish/QuickClip.exe")) { throw "QuickClip.exe was not produced" }
+          $exe = Get-Item "publish/QuickClip.exe"
+          Write-Host "EXE: $($exe.FullName)"
+          Write-Host "Size: $($exe.Length) bytes"
+          Write-Host "File version: $($exe.VersionInfo.FileVersion)"
+
+      - name: Run actual WPF executable smoke test
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "$PWD/publish/QuickClip.exe" -ArgumentList "--smoke-ui" -PassThru
+          if (-not $p.WaitForExit(15000)) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw "QuickClip.exe did not exit from smoke-ui mode within 15 seconds"
+          }
+          if ($p.ExitCode -ne 0) {
+            throw "QuickClip.exe smoke test failed with exit code $($p.ExitCode)"
+          }
+          Write-Host "PASS: QuickClip.exe started its real WPF MainWindow and exited cleanly. ExitCode=$($p.ExitCode)"
+
+      - name: Package tested Windows build
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "publish/*" -DestinationPath "QuickClip-v0.5.1-Windows-x64-tested.zip" -Force
+          $hash = Get-FileHash "QuickClip-v0.5.1-Windows-x64-tested.zip" -Algorithm SHA256
+          Write-Host "PACKAGE_SHA256=$($hash.Hash.ToLowerInvariant())"
+
+      - name: Upload tested build
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickClip-v0.5.1-Windows-x64-tested
+          path: QuickClip-v0.5.1-Windows-x64-tested.zip
+          if-no-files-found: error
+          retention-days: 7
